@@ -1,4 +1,6 @@
 import arxiv
+import requests
+from urllib.parse import quote
 
 def _get_pdf_url_patch(links) -> str:
     """
@@ -65,9 +67,41 @@ def get_arxiv_paper(query: str, debug: bool = False) -> list[ArxivPaper]:
     global ARXIV_API_ERROR
     client = arxiv.Client(num_retries=10, delay_seconds=10)
 
-    feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
-    if 'Feed error for query' in feed.feed.title:
+    # RSS 拉取：用 requests 先取文本，再交给 feedparser 解析，避免 feedparser 直接联网时
+    # 在 GHA 上偶发拿到 HTML 错误页导致没有 title
+    feed_url = f"https://rss.arxiv.org/atom/{quote(query, safe='')}"
+    headers = {
+        # 建议换成你自己的邮箱（更稳定、更礼貌）
+        "User-Agent": "zotero-arxiv-daily/1.0 (mailto:tingting.wang@imperial.ac.uk)"
+    }
+
+    try:
+        r = requests.get(feed_url, headers=headers, timeout=30)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        ARXIV_API_ERROR = True
+        logger.error(f"ArXiv RSS request failed: {e} url={feed_url}")
+        return []
+
+    feed = feedparser.parse(r.text)
+
+    feed_title = feed.feed.get("title", "")
+    if not feed_title:
+        # 解析失败或返回的不是 Atom XML 时，这里通常为空
+        logger.error(
+            "ArXiv RSS parsed but missing title. "
+            f"http_status={r.status_code} url={feed_url} "
+            f"bozo={getattr(feed, 'bozo', None)} "
+            f"bozo_exception={getattr(feed, 'bozo_exception', None)}"
+        )
+        return []
+
+    if "Feed error for query" in feed_title:
         raise Exception(f"Invalid ARXIV_QUERY: {query}.")
+    
+    if not getattr(feed, "entries", None):
+        logger.warning(f"ArXiv RSS has no entries. title={feed_title} url={feed_url}")
+        return []
 
     if not debug:
         papers: list[ArxivPaper] = []
