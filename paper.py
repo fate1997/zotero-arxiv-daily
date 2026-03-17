@@ -5,13 +5,14 @@ import arxiv
 import tarfile
 import re
 import time
+import ast
 from llm import get_llm
 import requests
 from requests.adapters import HTTPAdapter
 from loguru import logger
 import tiktoken
 from contextlib import ExitStack
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib3.util.retry import Retry
 
 
@@ -102,7 +103,59 @@ class ArxivPaper:
             return None
 
     _CODE_URL_CACHE: dict[str, Optional[str]] = {}
+    _SOURCE_DOWNLOAD_LAST_TS: float = 0.0
 
+    @classmethod
+    def _download_source_with_retry(cls, paper: arxiv.Result, dirpath: str, arxiv_id: str) -> str:
+        """Download arXiv source with throttling and graceful retry."""
+        attempts = 4
+        min_interval_seconds = 3.0
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            wait_seconds = max(0.0, min_interval_seconds - (time.time() - cls._SOURCE_DOWNLOAD_LAST_TS))
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+
+            try:
+                file = paper.download_source(dirpath=dirpath)
+                cls._SOURCE_DOWNLOAD_LAST_TS = time.time()
+                return file
+            except HTTPError as e:
+                cls._SOURCE_DOWNLOAD_LAST_TS = time.time()
+                last_error = e
+                if e.code == 404:
+                    raise
+                if e.code in {429, 500, 502, 503, 504}:
+                    backoff = min(60, 5 * (2 ** (attempt - 1)))
+                    logger.warning(
+                        f"Transient HTTP error {e.code} when downloading source for {arxiv_id} "
+                        f"(attempt {attempt}/{attempts}). Sleeping {backoff}s before retry."
+                    )
+                    if attempt < attempts:
+                        time.sleep(backoff)
+                        continue
+                raise
+            except (URLError, TimeoutError) as e:
+                cls._SOURCE_DOWNLOAD_LAST_TS = time.time()
+                last_error = e
+                backoff = min(60, 5 * (2 ** (attempt - 1)))
+                logger.warning(
+                    f"Network error when downloading source for {arxiv_id} "
+                    f"(attempt {attempt}/{attempts}): {e}. Sleeping {backoff}s before retry."
+                )
+                if attempt < attempts:
+                    time.sleep(backoff)
+                    continue
+                raise
+            except Exception as e:
+                cls._SOURCE_DOWNLOAD_LAST_TS = time.time()
+                last_error = e
+                raise
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"Failed to download source for {arxiv_id} for an unknown reason.")
 
     @cached_property
     def code_url(self) -> Optional[str]:
@@ -132,94 +185,105 @@ class ArxivPaper:
     def tex(self) -> Optional[dict[str, str]]:
         with ExitStack() as stack:
             tmpdirname = stack.enter_context(TemporaryDirectory())
-            # file = self._paper.download_source(dirpath=tmpdirname)
             try:
-                # 尝试下载源文件
-                file = self._paper.download_source(dirpath=tmpdirname)
+                file = type(self)._download_source_with_retry(
+                    paper=self._paper,
+                    dirpath=tmpdirname,
+                    arxiv_id=self.arxiv_id,
+                )
             except HTTPError as e:
-                # 捕获 HTTP 错误
                 if e.code == 404:
-                    # 如果是 404 Not Found，说明源文件不存在，这是正常情况
                     logger.warning(f"Source for {self.arxiv_id} not found (404). Skipping source analysis.")
-                    return None # 直接返回 None，后续依赖 tex 的代码会安全地处理
+                elif e.code == 429:
+                    logger.warning(
+                        f"Source download for {self.arxiv_id} hit arXiv rate limits (429). "
+                        "Skipping source-based analysis for this paper."
+                    )
                 else:
-                    # 如果是其他 HTTP 错误 (如 503)，这可能是临时性问题，值得记录下来
-                    logger.error(f"HTTP Error {e.code} when downloading source for {self.arxiv_id}: {e.reason}")
-                    raise # 重新抛出异常，因为这可能是个需要关注的严重问题
-            except Exception as e:
-                logger.error(f"Error when downloading source for {self.arxiv_id}: {e}")
+                    logger.warning(
+                        f"HTTP error {e.code} when downloading source for {self.arxiv_id}. "
+                        "Skipping source-based analysis for this paper."
+                    )
                 return None
+            except Exception as e:
+                logger.warning(
+                    f"Error when downloading source for {self.arxiv_id}: {e}. "
+                    "Skipping source-based analysis for this paper."
+                )
+                return None
+
             try:
                 tar = stack.enter_context(tarfile.open(file))
             except tarfile.ReadError:
                 logger.debug(f"Failed to find main tex file of {self.arxiv_id}: Not a tar file.")
                 return None
- 
+
             tex_files = [f for f in tar.getnames() if f.endswith('.tex')]
             if len(tex_files) == 0:
                 logger.debug(f"Failed to find main tex file of {self.arxiv_id}: No tex file.")
                 return None
-            
+
             bbl_file = [f for f in tar.getnames() if f.endswith('.bbl')]
-            match len(bbl_file) :
+            match len(bbl_file):
                 case 0:
                     if len(tex_files) > 1:
-                        logger.debug(f"Cannot find main tex file of {self.arxiv_id} from bbl: There are multiple tex files while no bbl file.")
+                        logger.debug(
+                            f"Cannot find main tex file of {self.arxiv_id} from bbl: "
+                            "There are multiple tex files while no bbl file."
+                        )
                         main_tex = None
                     else:
                         main_tex = tex_files[0]
                 case 1:
-                    main_name = bbl_file[0].replace('.bbl','')
+                    main_name = bbl_file[0].replace('.bbl', '')
                     main_tex = f"{main_name}.tex"
                     if main_tex not in tex_files:
-                        logger.debug(f"Cannot find main tex file of {self.arxiv_id} from bbl: The bbl file does not match any tex file.")
+                        logger.debug(
+                            f"Cannot find main tex file of {self.arxiv_id} from bbl: "
+                            "The bbl file does not match any tex file."
+                        )
                         main_tex = None
                 case _:
-                    logger.debug(f"Cannot find main tex file of {self.arxiv_id} from bbl: There are multiple bbl files.")
+                    logger.debug(
+                        f"Cannot find main tex file of {self.arxiv_id} from bbl: There are multiple bbl files."
+                    )
                     main_tex = None
+
             if main_tex is None:
                 logger.debug(f"Trying to choose tex file containing the document block as main tex file of {self.arxiv_id}")
-            #read all tex files
-            file_contents = {}
+
+            file_contents: dict[str, str] = {}
             for t in tex_files:
                 f = tar.extractfile(t)
-                content = f.read().decode('utf-8',errors='ignore')
-                #remove comments
+                if f is None:
+                    continue
+                content = f.read().decode('utf-8', errors='ignore')
                 content = re.sub(r'%.*\n', '\n', content)
                 content = re.sub(r'\\begin{comment}.*?\\end{comment}', '', content, flags=re.DOTALL)
                 content = re.sub(r'\\iffalse.*?\\fi', '', content, flags=re.DOTALL)
-                #remove redundant \n
                 content = re.sub(r'\n+', '\n', content)
                 content = re.sub(r'\\\\', '', content)
-                #remove consecutive spaces
                 content = re.sub(r'[ \t\r\f]{3,}', ' ', content)
                 if main_tex is None and re.search(r'\\begin\{document\}', content):
                     main_tex = t
                     logger.debug(f"Choose {t} as main tex file of {self.arxiv_id}")
                 file_contents[t] = content
-            
+
             if main_tex is not None:
                 main_source: str = file_contents[main_tex]
-                include_files = re.findall(r'\\input\{(.+?)\}', main_source) + \
-                                re.findall(r'\\include\{(.+?)\}', main_source)
+                include_files = re.findall(r'\\input\{(.+?)\}', main_source) + re.findall(r'\\include\{(.+?)\}', main_source)
                 for f in include_files:
-                    if not f.endswith('.tex'):
-                        file_name = f + '.tex'
-                    else:
-                        file_name = f
-                    main_source = main_source.replace(
-                        f'\\input{{{f}}}',
-                        file_contents.get(file_name, '')
-                    )
+                    file_name = f if f.endswith('.tex') else f + '.tex'
+                    main_source = main_source.replace(f'\\input{{{f}}}', file_contents.get(file_name, ''))
+                    main_source = main_source.replace(f'\\include{{{f}}}', file_contents.get(file_name, ''))
                 file_contents["all"] = main_source
                 return file_contents
-            else:
-                logger.debug(
-                    f"Failed to find main tex file of {self.arxiv_id}: "
-                    "No tex file containing the document block."
-                )
-                return None
-    
+
+            logger.debug(
+                f"Failed to find main tex file of {self.arxiv_id}: No tex file containing the document block."
+            )
+            return None
+
     @cached_property
     def tldr(self) -> str:
         introduction = ""
@@ -357,22 +421,32 @@ __CONCLUSION__
         prompt_tokens = prompt_tokens[:4000]  # truncate to 4000 tokens
         prompt = enc.decode(prompt_tokens)
         llm = get_llm()
-        affiliations = llm.generate(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an assistant who perfectly extracts affiliations of authors from the author information of a paper. You should return a python list of affiliations sorted by the author order, like ['TsingHua University','Peking University']. If an affiliation is consisted of multi-level affiliations, like 'Department of Computer Science, TsingHua University', you should return the top-level affiliation 'TsingHua University' only. Do not contain duplicated affiliations. If there is no affiliation found, you should return an empty list [ ]. You should only return the final list of affiliations, and do not return any intermediate results.",
-                },
-                {"role": "user", "content": prompt},
-            ]
-        )
+        try:
+            affiliations = llm.generate(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an assistant who perfectly extracts affiliations of authors from the author information of a paper. You should return a python list of affiliations sorted by the author order, like ['TsingHua University','Peking University']. If an affiliation is consisted of multi-level affiliations, like 'Department of Computer Science, TsingHua University', you should return the top-level affiliation 'TsingHua University' only. Do not contain duplicated affiliations. If there is no affiliation found, you should return an empty list [ ]. You should only return the final list of affiliations, and do not return any intermediate results.",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
+        except Exception as e:
+            logger.debug(f"Failed to extract affiliations of {self.arxiv_id}: LLM call failed: {e}")
+            return None
 
         try:
             affiliations = re.search(r'\[.*?\]', affiliations, flags=re.DOTALL).group(0)
-            affiliations = eval(affiliations)
-            affiliations = list(set(affiliations))
-            affiliations = [str(a) for a in affiliations]
+            affiliations = ast.literal_eval(affiliations)
+            seen = set()
+            normalized_affiliations = []
+            for affiliation in affiliations:
+                affiliation = str(affiliation).strip()
+                if not affiliation or affiliation in seen:
+                    continue
+                seen.add(affiliation)
+                normalized_affiliations.append(affiliation)
         except Exception as e:
             logger.debug(f"Failed to extract affiliations of {self.arxiv_id}: {e}")
             return None
-        return affiliations
+        return normalized_affiliations
