@@ -141,51 +141,74 @@ def get_stars(score: float | None):
 
 def render_email(papers:list[ArxivPaper]):
     parts = []
-    if len(papers) == 0 :
+    if len(papers) == 0:
         return framework.replace('__CONTENT__', get_empty_html())
-    
-  # ✨ 按 score 从高到低排序（None 放到最后）
+
     papers = sorted(
         papers,
         key=lambda p: (p.score is None, -(p.score or 0))
     )
-    
-    for p in tqdm(papers,desc='Rendering Email'):
-        rate = get_stars(p.score)
-        author_list = [a.name for a in p.authors]
-        num_authors = len(author_list)
-        
-        if num_authors <= 5:
-            authors = ', '.join(author_list)
-        else:
-            authors = ', '.join(author_list[:3] + ['...'] + author_list[-2:])
-        if p.affiliations is not None:
-            affiliations = p.affiliations[:5]
-            affiliations = ', '.join(affiliations)
-            if len(p.affiliations) > 5:
-                affiliations += ', ...'
-        else:
-            affiliations = 'Unknown Affiliation'
 
-        # ✨ 关键改动：把 TLDR 用 HTML 显示出来
-        tldr_html = markdown.markdown(p.tldr)# 把 markdown 转成 HTML
-        
-        # 把 HTML 传给 block_html
-        parts.append(
-            get_block_html(
-                p.title,
-                authors,
-                rate,
-                p.arxiv_id,
-                tldr_html,
-                p.pdf_url,
-                p.code_url,
-                affiliations
+    skipped_papers = []
+    for p in tqdm(papers, desc='Rendering Email'):
+        try:
+            rate = get_stars(p.score)
+            author_list = [a.name for a in p.authors]
+            num_authors = len(author_list)
+
+            if num_authors <= 5:
+                authors = ', '.join(author_list)
+            else:
+                authors = ', '.join(author_list[:3] + ['...'] + author_list[-2:])
+
+            try:
+                paper_affiliations = p.affiliations
+            except Exception as e:
+                logger.warning(f"Failed to extract affiliations for {p.arxiv_id}: {e}")
+                paper_affiliations = None
+
+            if paper_affiliations is not None:
+                affiliations = paper_affiliations[:5]
+                affiliations = ', '.join(affiliations)
+                if len(paper_affiliations) > 5:
+                    affiliations += ', ...'
+            else:
+                affiliations = 'Unknown Affiliation'
+
+            try:
+                tldr_html = markdown.markdown(p.tldr)
+            except Exception as e:
+                logger.warning(f"Failed to generate TLDR for {p.arxiv_id}: {e}")
+                summary_fallback = p.summary.strip().replace('\n', ' ')
+                if len(summary_fallback) > 1200:
+                    summary_fallback = summary_fallback[:1200].rstrip() + '...'
+                tldr_html = markdown.markdown(summary_fallback or 'No summary available.')
+
+            parts.append(
+                get_block_html(
+                    p.title,
+                    authors,
+                    rate,
+                    p.arxiv_id,
+                    tldr_html,
+                    p.pdf_url,
+                    p.code_url,
+                    affiliations,
+                )
             )
-        )
-        time.sleep(10)
+        except Exception as e:
+            paper_id = getattr(p, 'arxiv_id', 'unknown')
+            logger.exception(f"Skipping paper {paper_id} during email rendering because of an unexpected error: {e}")
+            skipped_papers.append(paper_id)
+        time.sleep(2)
+
+    if not parts:
+        logger.warning('All papers were skipped during email rendering. Sending an empty email instead.')
+        return framework.replace('__CONTENT__', get_empty_html())
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
+    if skipped_papers:
+        logger.warning(f"Skipped {len(skipped_papers)} paper(s) during rendering: {', '.join(skipped_papers)}")
     return framework.replace('__CONTENT__', content)
 
 def send_email(sender:str, receiver:str, password:str,smtp_server:str,smtp_port:int, html:str,):
