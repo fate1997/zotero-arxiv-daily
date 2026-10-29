@@ -1,6 +1,11 @@
 name: Send emails daily
 on:
   workflow_dispatch:
+    inputs:
+      send_empty:
+        description: Send an email even if no new papers qualify (delivery test)
+        type: boolean
+        default: false
   schedule:
     - cron: '0 22 * * *'
 
@@ -36,11 +41,16 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+          SEND_EMPTY: ${{ inputs.send_empty || false }}
         run: |
           if [ -n "$CUSTOM_CONFIG" ]; then
             printf '%s\n' "$CUSTOM_CONFIG" > config/custom.yaml
           fi
-          uv run src/zotero_arxiv_daily/main.py executor.history_path=.cache/alert-history.json
+          args=(executor.history_path=.cache/alert-history.json)
+          if [ "$SEND_EMPTY" = true ]; then
+            args+=(executor.send_empty=true)
+          fi
+          uv run --locked src/zotero_arxiv_daily/main.py "${args[@]}"
 
       - name: Save sent-paper history after successful delivery
         uses: actions/cache/save@v4

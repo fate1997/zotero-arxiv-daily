@@ -167,7 +167,7 @@ That's all! Now you can test the workflow by manually triggering it:
 ![test](./assets/test.png)
 
 > [!NOTE]
-> The Test workflow limits the current feed to 10 entries and saves an HTML/JSON preview as a `digest-preview` artifact; it does not send email or update history. The daily workflow retrieves the current new-paper feed, filters duplicates and weak matches, and sends only when recommendations remain (unless `send_empty: true`). A quiet feed or strict filters can produce an empty preview.
+> The Test workflow limits the current feed to 10 entries and saves an HTML/JSON preview as a `digest-preview` artifact; it does not send email or update history. If there are no new arXiv announcements, debug previews use the 10 latest papers in your configured categories. The preview cutoff defaults to `0` so you can inspect scores; set the `min_score` workflow input to your daily cutoff to test filtering. Duplicate checks still apply. The daily workflow uses only new announcements and sends when recommendations remain. Its manual `send_empty` input can send an empty digest to check delivery on a quiet day; scheduled behavior is unchanged.
 
 Download the preview artifact after the Test workflow finishes. The daily workflow sends the real digest.
 

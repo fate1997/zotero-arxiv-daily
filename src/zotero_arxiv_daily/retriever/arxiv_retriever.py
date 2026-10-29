@@ -29,6 +29,15 @@ class ArxivRetriever(BaseRetriever):
         all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in feed.entries if i.get("arxiv_announce_type","new") == 'new']
         if self.config.executor.debug:
             all_paper_ids = all_paper_ids[:10]
+            if not all_paper_ids and self.config.executor.get("dry_run", False):
+                logger.info("No new arXiv announcements; preview uses the 10 latest papers in the configured categories")
+                search = arxiv.Search(
+                    query=" OR ".join(f"cat:{category}" for category in self.config.source.arxiv.category),
+                    max_results=10,
+                    sort_by=arxiv.SortCriterion.SubmittedDate,
+                    sort_order=arxiv.SortOrder.Descending,
+                )
+                return list(client.results(search))
 
         # Get full information of each paper from arxiv api
         bar = tqdm(total=len(all_paper_ids))

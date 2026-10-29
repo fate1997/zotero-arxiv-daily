@@ -48,3 +48,30 @@ def test_failed_pdf_falls_back_to_abstract(config, monkeypatch):
     ArxivRetriever(config).enrich_paper(paper)
     assert paper.full_text is None
     assert paper.abstract == "Usable abstract"
+
+
+@pytest.mark.parametrize(('debug', 'dry_run', 'uses_latest'), [
+    (True, True, True), (True, False, False), (False, True, False), (False, False, False),
+])
+def test_empty_feed_uses_recent_papers_only_for_debug_preview(config, monkeypatch, debug, dry_run, uses_latest):
+    import arxiv
+    from unittest.mock import Mock
+
+    config.executor.debug = debug
+    config.executor.dry_run = dry_run
+    feed = feedparser.FeedParserDict(feed={'title': 'arXiv'}, entries=[], bozo=False, status=200)
+    monkeypatch.setattr(feedparser, 'parse', lambda url: feed)
+    client = Mock()
+    recent = object()
+    client.results.return_value = iter([recent])
+    monkeypatch.setattr('zotero_arxiv_daily.retriever.arxiv_retriever.arxiv.Client', Mock(return_value=client))
+    papers = ArxivRetriever(config)._retrieve_raw_papers()
+    if uses_latest:
+        assert papers == [recent]
+        search = client.results.call_args.args[0]
+        assert search.max_results == 10
+        assert search.sort_by == arxiv.SortCriterion.SubmittedDate
+        assert search.query == ' OR '.join(f'cat:{category}' for category in config.source.arxiv.category)
+    else:
+        assert papers == []
+        client.results.assert_not_called()

@@ -1,6 +1,11 @@
 name: Test
 on:
   workflow_dispatch:
+    inputs:
+      min_score:
+        description: Preview relevance cutoff (0 shows all; daily settings are unchanged)
+        type: string
+        default: '0'
 
 jobs:
   calculate-and-send:
@@ -26,12 +31,13 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
+          PREVIEW_MIN_SCORE: ${{ inputs.min_score || '0' }}
         run: |
           export DEBUG=true
           if [ -n "$CUSTOM_CONFIG" ]; then
             printf '%s\n' "$CUSTOM_CONFIG" > config/custom.yaml
           fi
-          uv run src/zotero_arxiv_daily/main.py executor.dry_run=true executor.output_dir=outputs/preview
+          uv run --locked src/zotero_arxiv_daily/main.py executor.dry_run=true executor.output_dir=outputs/preview "executor.min_score=$PREVIEW_MIN_SCORE"
 
       - name: Upload digest preview
         uses: actions/upload-artifact@v4
