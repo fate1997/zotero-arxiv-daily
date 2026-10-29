@@ -41,7 +41,7 @@ async def chat_completions(request:dict):
 @app.post("/v1/embeddings")
 async def embeddings(request:dict):
     return {'model': 'text-embedding-3-large',
- 'data': [{'embedding': [0.1, 0.2, 0.3], 'index': 0, 'object': 'embedding'}] * len(request['input']),
+ 'data': [{'embedding': [0.1, 0.2, 0.3], 'index': i, 'object': 'embedding'} for i in range(len(request['input']))],
  'object': 'list',
  'usage': {'completion_tokens': 0,
   'prompt_tokens': 2,

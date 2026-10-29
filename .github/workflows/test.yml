@@ -28,7 +28,13 @@ jobs:
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
         run: |
           export DEBUG=true
-          printf "%b\n" "$CUSTOM_CONFIG" > config/custom.yaml
-          echo "Use custom config: "
-          cat config/custom.yaml
-          uv run src/zotero_arxiv_daily/main.py
+          if [ -n "$CUSTOM_CONFIG" ]; then
+            printf '%s\n' "$CUSTOM_CONFIG" > config/custom.yaml
+          fi
+          uv run src/zotero_arxiv_daily/main.py executor.dry_run=true executor.output_dir=outputs/preview
+
+      - name: Upload digest preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-preview
+          path: outputs/preview/

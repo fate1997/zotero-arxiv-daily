@@ -55,7 +55,8 @@ class BiorxivRetriever(BaseRetriever):
             title=title,
             authors=authors,
             abstract=abstract,
-            url=pdf_url,
+            url=f"https://www.{self.server}.org/content/{raw_paper['doi']}v{raw_paper['version']}",
             pdf_url=pdf_url,
-            full_text=full_text
+            full_text=full_text,
+            doi=raw_paper['doi'],
         )

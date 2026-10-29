@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from omegaconf import DictConfig
 from ..protocol import Paper, RawPaperItem
-from concurrent.futures import ProcessPoolExecutor
 from typing import Type
 from loguru import logger
 class BaseRetriever(ABC):
@@ -20,11 +19,12 @@ class BaseRetriever(ABC):
 
     def retrieve_papers(self) -> list[Paper]:
         raw_papers = self._retrieve_raw_papers()
-        papers = []
-        logger.info("Processing papers...")
-        with ProcessPoolExecutor(max_workers=self.config.executor.max_workers) as exec_pool:
-            papers = list(exec_pool.map(self.convert_to_paper, raw_papers))
+        logger.info("Processing paper metadata...")
+        papers = [self.convert_to_paper(p) for p in raw_papers]
         return [p for p in papers if p is not None]
+
+    def enrich_paper(self, paper: Paper) -> None:
+        """Fetch optional full text only after a paper is selected for the alert."""
 
 registered_retrievers = {}
 

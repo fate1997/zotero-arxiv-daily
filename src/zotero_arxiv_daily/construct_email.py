@@ -1,131 +1,87 @@
-from .protocol import Paper
-import math
+"""Render an explainable digest; all external text and URLs are escaped."""
+
+from html import escape
+from urllib.parse import urlsplit
+
+from .protocol import LibraryMatch, Paper
+
+framework = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;background:#f3f5f7;color:#243040;font-family:Arial,sans-serif">
+<div style="max-width:760px;margin:auto;padding:24px">
+<h1 style="font-size:26px">Your research reading radar</h1>
+__CONTENT__
+<p style="font-size:12px;color:#657080">Relevance is a ranking score, not a probability.
+Reading signals reflect additions, configured tags/collections, and synced note or annotation activity.
+Open a paper's page to save it with the Zotero Connector.</p>
+<p style="font-size:12px;color:#657080">To unsubscribe, disable the daily workflow in your GitHub repository.</p>
+</div></body></html>"""
 
 
-framework = """
-<!DOCTYPE HTML>
-<html>
-<head>
-  <style>
-    .star-wrapper {
-      font-size: 1.3em; /* 调整星星大小 */
-      line-height: 1; /* 确保垂直对齐 */
-      display: inline-flex;
-      align-items: center; /* 保持对齐 */
-    }
-    .half-star {
-      display: inline-block;
-      width: 0.5em; /* 半颗星的宽度 */
-      overflow: hidden;
-      white-space: nowrap;
-      vertical-align: middle;
-    }
-    .full-star {
-      vertical-align: middle;
-    }
-  </style>
-</head>
-<body>
+def safe_url(value: str | None, *, zotero: bool = False) -> str:
+    try:
+        parsed = urlsplit(value or "")
+    except ValueError:
+        return ""
+    if parsed.scheme in {"https", "http"} and parsed.netloc:
+        return escape(value, quote=True)
+    if zotero and parsed.scheme == "zotero" and parsed.netloc == "select":
+        return escape(value, quote=True)
+    return ""
 
-<div>
-    __CONTENT__
-</div>
-
-<br><br>
-<div>
-To unsubscribe, remove your email in your Github Action setting.
-</div>
-
-</body>
-</html>
-"""
 
 def get_empty_html():
-  block_template = """
-  <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
-  <tr>
-    <td style="font-size: 20px; font-weight: bold; color: #333;">
-        No Papers Today. Take a Rest!
-    </td>
-  </tr>
-  </table>
-  """
-  return block_template
-
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None):
-    block_template = """
-    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
-    <tr>
-        <td style="font-size: 20px; font-weight: bold; color: #333;">
-            {title}
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #666; padding: 8px 0;">
-            {authors}
-            <br>
-            <i>{affiliations}</i>
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>Relevance:</strong> {rate}
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>TLDR:</strong> {tldr}
-        </td>
-    </tr>
-
-    <tr>
-        <td style="padding: 8px 0;">
-            <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>
-        </td>
-    </tr>
-</table>
-"""
-    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations)
-
-def get_stars(score:float):
-    full_star = '<span class="full-star">⭐</span>'
-    half_star = '<span class="half-star">⭐</span>'
-    low = 6
-    high = 8
-    if score <= low:
-        return ''
-    elif score >= high:
-        return full_star * 5
-    else:
-        interval = (high-low) / 10
-        star_num = math.ceil((score-low) / interval)
-        full_star_num = int(star_num/2)
-        half_star_num = star_num - full_star_num * 2
-        return '<div class="star-wrapper">'+full_star * full_star_num + half_star * half_star_num + '</div>'
+    return '<p>No new papers cleared your alert filters today.</p>'
 
 
-def render_email(papers:list[Paper]) -> str:
-    parts = []
-    if len(papers) == 0 :
+def get_block_html(title: str, authors: str, rate, tldr: str, pdf_url: str | None,
+                   affiliations: str | None = None, *, url: str = "", source: str = "",
+                   matches: list[LibraryMatch] | None = None, summary_label: str = "TL;DR"):
+    page = safe_url(url)
+    heading = escape(title)
+    if page:
+        heading = f'<a href="{page}" style="color:#164b73">{heading}</a>'
+    links = []
+    if page:
+        links.append(f'<a href="{page}">Paper page / save to Zotero</a>')
+    pdf = safe_url(pdf_url)
+    if pdf:
+        links.append(f'<a href="{pdf}">PDF</a>')
+    related = []
+    for match in matches or []:
+        label = escape(match.title)
+        link = safe_url(match.url, zotero=True)
+        if link:
+            label = f'<a href="{link}">{label}</a>'
+        signals = escape("; ".join(match.signals))
+        related.append(f'<li>{label}<br><span style="color:#657080;font-size:12px">{signals}</span></li>')
+    why = ('<p><strong>Why this paper:</strong> Similar to these papers in your Zotero:</p>'
+           + '<ul>' + ''.join(related) + '</ul>') if related else ''
+    affiliation = f'<br><i>{escape(affiliations)}</i>' if affiliations else ''
+    return f"""<table role="presentation" width="100%" style="margin:18px 0;padding:20px;background:white;border:1px solid #dde3e8;border-radius:8px">
+<tr><td>
+<p style="font-size:12px;color:#657080">{escape(source)} · Relevance: {escape(str(rate))}/10</p>
+<h2 style="font-size:20px;margin:10px 0">{heading}</h2>
+<p style="font-size:13px;color:#657080">{escape(authors)}{affiliation}</p>
+<p><strong>{escape(summary_label)}:</strong> {escape(tldr or '')}</p>
+{why}
+<p>{' &nbsp; · &nbsp; '.join(links)}</p>
+</td></tr></table>"""
+
+
+def render_email(papers: list[Paper]) -> str:
+    if not papers:
         return framework.replace('__CONTENT__', get_empty_html())
-    
-    for p in papers:
-        #rate = get_stars(p.score)
-        rate = round(p.score, 1) if p.score is not None else 'Unknown'
-        author_list = [a for a in p.authors]
-        num_authors = len(author_list)
-        if num_authors <= 5:
-            authors = ', '.join(author_list)
-        else:
-            authors = ', '.join(author_list[:3] + ['...'] + author_list[-2:])
-        if p.affiliations is not None:
-            affiliations = p.affiliations[:5]
-            affiliations = ', '.join(affiliations)
-            if len(p.affiliations) > 5:
-                affiliations += ', ...'
-        else:
-            affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations))
-
-    content = '<br>' + '</br><br>'.join(parts) + '</br>'
-    return framework.replace('__CONTENT__', content)
+    parts = [f'<p>{len(papers)} new papers matched your Zotero reading profile.</p>']
+    for paper in papers:
+        authors = paper.authors
+        if len(authors) > 5:
+            authors = authors[:3] + ['…'] + authors[-2:]
+        affiliations = ', '.join(paper.affiliations[:5]) if paper.affiliations else None
+        parts.append(get_block_html(
+            paper.title, ', '.join(authors), f'{paper.score:.1f}' if paper.score is not None else 'Unknown',
+            paper.tldr or paper.abstract, paper.pdf_url, affiliations,
+            url=paper.url, source=paper.source, matches=paper.library_matches,
+            summary_label="TL;DR" if paper.tldr else "Abstract",
+        ))
+    return framework.replace('__CONTENT__', ''.join(parts))

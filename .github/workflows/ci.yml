@@ -17,10 +17,6 @@ jobs:
         image: mailhog/mailhog:latest
         ports:
           - 1025:1025  # SMTP
-      openai:
-        image: tidedra/mock_openai:latest
-        ports:
-          - 30000:30000
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -28,6 +24,11 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v7.1.4
 
+      - name: Start embedding and LLM test server
+        run: |
+          docker build -t zotero-mock-openai tests/utils/mock_openai
+          docker run -d -p 127.0.0.1:30000:30000 zotero-mock-openai
+          curl --retry 10 --retry-delay 1 --retry-connrefused --fail http://localhost:30000/docs > /dev/null
 
       - name: Run Pytest
         env:
@@ -37,6 +38,6 @@ jobs:
           RECEIVER: "test@example.com"
           SENDER_PASSWORD: "test"
           OPENAI_API_KEY: "sk-xxx"
-          OPENAI_API_BASE: "http://openai:30000/v1"
+          OPENAI_API_BASE: "http://localhost:30000/v1"
         run: |
-          uv run pytest
+          uv run pytest --run-integration

@@ -2,15 +2,13 @@ import tarfile
 import re
 import glob
 import smtplib
+import ssl
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import parseaddr, formataddr
 from loguru import logger
 import datetime
 from omegaconf import DictConfig
-import pymupdf.layout
-pymupdf.layout.activate()
-import pymupdf4llm
 def extract_tex_code_from_tar(file_path:str, paper_id:str) -> dict[str,str]:
     try:
         tar = tarfile.open(file_path)
@@ -82,6 +80,9 @@ def extract_tex_code_from_tar(file_path:str, paper_id:str) -> dict[str,str]:
     return file_contents
 
 def extract_markdown_from_pdf(file_path:str) -> str:
+    import pymupdf.layout
+    pymupdf.layout.activate()
+    import pymupdf4llm
     return pymupdf4llm.to_markdown(file_path,use_ocr=False,header=False,footer=False,ignore_code=True)
 
 def glob_match(path:str, pattern:str) -> bool:
@@ -99,22 +100,24 @@ def send_email(config:DictConfig, html:str):
         return formataddr((Header(name, 'utf-8').encode(), addr))
 
     msg = MIMEText(html, 'html', 'utf-8')
-    msg['From'] = _format_addr('Github Action <%s>' % sender)
+    msg['From'] = _format_addr('Research Radar <%s>' % sender)
     msg['To'] = _format_addr('You <%s>' % receiver)
     today = datetime.datetime.now().strftime('%Y/%m/%d')
-    msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
+    msg['Subject'] = Header(f'Research Radar {today}', 'utf-8').encode()
 
-    try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-    except Exception as e:
-        logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
-        try:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-        except Exception as e:
-            logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
-            server = smtplib.SMTP(smtp_server, smtp_port)
-
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
-    server.quit()
+    security = config.email.get('smtp_security', 'auto')
+    if security == 'auto':
+        security = 'ssl' if smtp_port == 465 else 'starttls'
+    if security not in {'ssl', 'starttls', 'plain'}:
+        raise ValueError('smtp_security must be auto, ssl, starttls, or plain')
+    context = ssl.create_default_context()
+    if security == 'ssl':
+        server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30, context=context)
+    else:
+        server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+    with server:
+        if security == 'starttls':
+            server.starttls(context=context)
+        if config.email.get('smtp_auth', True):
+            server.login(sender, password)
+        server.sendmail(sender, [receiver], msg.as_string())

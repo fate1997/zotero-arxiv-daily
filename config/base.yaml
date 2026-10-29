@@ -2,6 +2,10 @@ zotero:
   user_id: ??? # User ID of your Zotero account.
   api_key: ??? # An Zotero API key with read access.
   include_path: null # A glob pattern marking the Zotero collections that should be included. Example: "2026/survey/**"
+  use_reading_activity: true # Use synced note/annotation timestamps; metadata edits are not reading.
+  reading_tags: [reading, currently-reading] # Case-insensitive explicit current-reading tags.
+  reading_paths: [] # Optional collection globs, e.g. ["Reading", "Reading/**"].
+  exclude_tags: [] # Ignore these tags when building interests (case-insensitive).
 
 source:
   arxiv:
@@ -16,6 +20,8 @@ email:
   receiver: ??? # The email account that receives the paper list. Example: abc@outlook.com
   smtp_server: ??? # The SMTP server that sends the email. Ask your email provider (Gmail, QQ, Outlook, ...) for its SMTP server. Example: smtp.qq.com
   smtp_port: ??? # The port of SMTP server. Example: 465
+  smtp_security: auto # auto = SSL on 465, STARTTLS elsewhere; plain is only for local testing.
+  smtp_auth: true
   sender_password: ??? # The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. Ask your email provider for this. Example: abcdefghijklmn
 
 llm:
@@ -29,6 +35,11 @@ llm:
   language: English # Preferred language for the TL;DR. Example: English
 
 reranker:
+  profile:
+    half_life_days: 45 # Decay actual elapsed time since addition, not position in the library.
+    activity_half_life_days: 30 # Decay note/annotation activity.
+    focus_weight: 0.7 # Blend current focus (70%) with enduring library interests (30%).
+    neighbor_count: 3 # Strongest match plus support from this many nearest neighbors.
   local:
     model: jinaai/jina-embeddings-v5-text-nano # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
     encode_kwargs:
@@ -39,11 +50,20 @@ reranker:
     key: null # API Key of your embedding model API. Example: sk-xxx
     base_url: null # API URL of your embedding model API. Example: https://api.openai.com/v1
     model: null # The model name of the embedding model. Example: text-embedding-3-large
+    batch_size: 32 # Bound request size for large libraries.
+    max_tokens: 4096 # Per-paper token cap; tune for your embedding provider.
 
 executor:
   debug: false # Whether to use debug mode. Example: true
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
-  max_workers: 10 # Concurrent workers for processing papers. Example: 10
-  max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
+  max_workers: 10 # Legacy compatibility option; metadata and selected PDFs now process sequentially.
+  max_paper_num: 20 # Keep the daily digest short.
+  min_score: 5.0 # Minimum relevance on a 0-10 scale; model-dependent, 0 disables filtering.
+  history_path: .cache/alert-history.json # null disables repeat-alert suppression.
+  history_days: 90 # Retention for successfully sent paper identities.
+  dry_run: false # Save HTML + JSON locally without sending or changing history.
+  output_dir: outputs/preview
+  generate_summaries: true # false uses abstracts and needs no LLM credentials.
+  fetch_full_text: true # Download PDFs only for selected papers, for better summaries.
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'

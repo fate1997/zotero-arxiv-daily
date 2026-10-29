@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TypeVar
 from datetime import datetime
 import re
@@ -7,6 +7,13 @@ from openai import OpenAI
 from loguru import logger
 import json
 RawPaperItem = TypeVar('RawPaperItem')
+
+@dataclass
+class LibraryMatch:
+    title: str
+    url: str
+    similarity: float
+    signals: list[str] = field(default_factory=list)
 
 @dataclass
 class Paper:
@@ -20,6 +27,9 @@ class Paper:
     tldr: Optional[str] = None
     affiliations: Optional[list[str]] = None
     score: Optional[float] = None
+    doi: str = ""
+    arxiv_id: str = ""
+    library_matches: list[LibraryMatch] = field(default_factory=list)
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
         lang = llm_params.get('language', 'English')
@@ -106,3 +116,11 @@ class CorpusPaper:
     abstract: str
     added_date: datetime
     paths: list[str]
+    key: str = ""
+    url: str = ""
+    doi: str = ""
+    arxiv_id: str = ""
+    tags: list[str] = field(default_factory=list)
+    last_read_date: Optional[datetime] = None
+    reading_signals: list[str] = field(default_factory=list)
+    is_reading: bool = False

@@ -5,7 +5,8 @@ from ..protocol import Paper
 from ..utils import extract_markdown_from_pdf
 from tempfile import TemporaryDirectory
 import feedparser
-from urllib.request import urlretrieve
+from urllib.request import urlopen
+import shutil
 from tqdm import tqdm
 import os
 from loguru import logger
@@ -20,8 +21,10 @@ class ArxivRetriever(BaseRetriever):
         query = '+'.join(self.config.source.arxiv.category)
         # Get the latest paper from arxiv rss feed
         feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
-        if 'Feed error for query' in feed.feed.title:
+        if 'Feed error for query' in feed.feed.get('title', ''):
             raise Exception(f"Invalid ARXIV_QUERY: {query}.")
+        if feed.get('status', 200) >= 400 or (feed.bozo and not feed.entries):
+            raise RuntimeError(f"Failed to read arXiv feed for {query}")
         raw_papers = []
         all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in feed.entries if i.get("arxiv_announce_type","new") == 'new']
         if self.config.executor.debug:
@@ -43,14 +46,6 @@ class ArxivRetriever(BaseRetriever):
         authors = [a.name for a in raw_paper.authors]
         abstract = raw_paper.summary
         pdf_url = raw_paper.pdf_url
-        with TemporaryDirectory() as temp_dir:
-            path = os.path.join(temp_dir, "paper.pdf")
-            urlretrieve(pdf_url, path)
-            try:
-                full_text = extract_markdown_from_pdf(path)
-            except Exception as e:
-                logger.warning(f"Failed to extract full text of {title}: {e}")
-                full_text = None
         return Paper(
             source=self.name,
             title=title,
@@ -58,5 +53,18 @@ class ArxivRetriever(BaseRetriever):
             abstract=abstract,
             url=raw_paper.entry_id,
             pdf_url=pdf_url,
-            full_text=full_text
+            doi=raw_paper.doi or "",
+            arxiv_id=raw_paper.get_short_id(),
         )
+
+    def enrich_paper(self, paper: Paper) -> None:
+        if paper.full_text or not paper.pdf_url:
+            return
+        try:
+            with TemporaryDirectory() as temp_dir:
+                path = os.path.join(temp_dir, "paper.pdf")
+                with urlopen(paper.pdf_url, timeout=30) as response, open(path, "wb") as target:
+                    shutil.copyfileobj(response, target)
+                paper.full_text = extract_markdown_from_pdf(path)
+        except Exception as e:
+            logger.warning(f"Using abstract for {paper.title}; PDF unavailable: {e}")
