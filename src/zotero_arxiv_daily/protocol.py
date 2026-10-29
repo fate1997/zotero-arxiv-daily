@@ -6,6 +6,7 @@ import tiktoken
 from openai import OpenAI
 from loguru import logger
 import json
+import ast
 RawPaperItem = TypeVar('RawPaperItem')
 
 @dataclass
@@ -76,7 +77,7 @@ class Paper:
 
     def _generate_affiliations_with_llm(self, openai_client:OpenAI,llm_params:dict) -> Optional[list[str]]:
         if self.full_text is not None:
-            prompt = f"Given the beginning of a paper, extract the affiliations of the authors in a python list format, which is sorted by the author order. If there is no affiliation found, return an empty list '[]':\n\n{self.full_text}"
+            prompt = f"Given the beginning of a paper, extract the affiliations of the authors as a JSON array of strings, sorted by the author order. If there is no affiliation found, return an empty array '[]':\n\n{self.full_text}"
             # use gpt-4o tokenizer for estimation
             enc = tiktoken.encoding_for_model("gpt-4o")
             prompt_tokens = enc.encode(prompt)
@@ -86,7 +87,7 @@ class Paper:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an assistant who perfectly extracts affiliations of authors from a paper. You should return a python list of affiliations sorted by the author order, like [\"TsingHua University\",\"Peking University\"]. If an affiliation is consisted of multi-level affiliations, like 'Department of Computer Science, TsingHua University', you should return the top-level affiliation 'TsingHua University' only. Do not contain duplicated affiliations. If there is no affiliation found, you should return an empty list [ ]. You should only return the final list of affiliations, and do not return any intermediate results.",
+                        "content": "You are an assistant who perfectly extracts affiliations of authors from a paper. You should return a JSON array of affiliation strings sorted by the author order, like [\"TsingHua University\",\"Peking University\"]. If an affiliation is consisted of multi-level affiliations, like 'Department of Computer Science, TsingHua University', you should return the top-level affiliation 'TsingHua University' only. Do not contain duplicated affiliations. If there is no affiliation found, you should return an empty list [ ]. You should only return the final list of affiliations, and do not return any intermediate results.",
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -95,9 +96,14 @@ class Paper:
             affiliations = affiliations.choices[0].message.content
 
             affiliations = re.search(r'\[.*?\]', affiliations, flags=re.DOTALL).group(0)
-            affiliations = json.loads(affiliations)
-            affiliations = list(set(affiliations))
-            affiliations = [str(a) for a in affiliations]
+            try:
+                affiliations = json.loads(affiliations)
+            except json.JSONDecodeError:
+                # Some providers follow the legacy Python-list wording and use single quotes.
+                affiliations = ast.literal_eval(affiliations)
+            if not isinstance(affiliations, list) or any(not isinstance(a, str) for a in affiliations):
+                raise ValueError("Affiliations must be a list of strings")
+            affiliations = list(dict.fromkeys(a.strip() for a in affiliations if a.strip()))
 
             return affiliations
     
