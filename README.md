@@ -173,6 +173,10 @@ Download the preview artifact after the Test workflow finishes. The daily workfl
 
 By default, the main workflow runs on 22:00 UTC everyday. You can change this time by editting the workflow config `.github/workflows/main.yml`.
 
+Workflows check out the commit from your own repository that triggered the run. Legacy `REPOSITORY`
+and `REF` variables no longer redirect the daily job to upstream code, so your fork's changes are
+used by both previews and daily emails.
+
 ### Local Running
 Supported by [uv](https://github.com/astral-sh/uv), this workflow can easily run on your local device if uv is installed:
 ```bash

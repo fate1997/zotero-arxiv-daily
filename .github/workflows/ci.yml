@@ -27,8 +27,15 @@ jobs:
       - name: Start embedding and LLM test server
         run: |
           docker build -t zotero-mock-openai tests/utils/mock_openai
-          docker run -d -p 127.0.0.1:30000:30000 zotero-mock-openai
-          curl --retry 10 --retry-delay 1 --retry-connrefused --fail http://localhost:30000/docs > /dev/null
+          docker run -d --name zotero-mock-openai -p 127.0.0.1:30000:30000 zotero-mock-openai
+          # Docker can accept a connection before Uvicorn is listening, then reset it.
+          # Retry transport failures as well as HTTP errors, with a bounded wait.
+          if ! curl --retry 30 --retry-delay 1 --retry-all-errors --retry-max-time 60 \
+            --connect-timeout 2 --max-time 3 --fail --silent --show-error \
+            http://127.0.0.1:30000/health > /dev/null; then
+            docker logs zotero-mock-openai
+            exit 1
+          fi
 
       - name: Run Pytest
         env:
@@ -40,4 +47,8 @@ jobs:
           OPENAI_API_KEY: "sk-xxx"
           OPENAI_API_BASE: "http://localhost:30000/v1"
         run: |
-          uv run pytest --run-integration
+          uv run --locked pytest --run-integration
+
+      - name: Show test server logs on failure
+        if: failure()
+        run: docker logs zotero-mock-openai

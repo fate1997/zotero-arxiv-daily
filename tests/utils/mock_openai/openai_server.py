@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from uvicorn import run
 app = FastAPI()
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request:dict):
     request_str = str(request)
