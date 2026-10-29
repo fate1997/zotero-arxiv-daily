@@ -6,6 +6,10 @@ on:
         description: Preview relevance cutoff (0 shows all; daily settings are unchanged)
         type: string
         default: '0'
+      max_papers:
+        description: Maximum papers to summarize in this preview
+        type: number
+        default: 3
 
 jobs:
   calculate-and-send:
@@ -30,14 +34,19 @@ jobs:
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
           PREVIEW_MIN_SCORE: ${{ inputs.min_score || '0' }}
+          PREVIEW_MAX_PAPERS: ${{ inputs.max_papers || 3 }}
         run: |
           export DEBUG=true
           if [ -n "$CUSTOM_CONFIG" ]; then
             printf '%s\n' "$CUSTOM_CONFIG" > config/custom.yaml
           fi
-          uv run --locked src/zotero_arxiv_daily/main.py executor.dry_run=true executor.output_dir=outputs/preview "executor.min_score=$PREVIEW_MIN_SCORE"
+          if [ -z "$MODEL_NAME" ]; then
+            unset MODEL_NAME
+          fi
+          uv run --locked src/zotero_arxiv_daily/main.py executor.dry_run=true executor.output_dir=outputs/preview "executor.min_score=$PREVIEW_MIN_SCORE" "executor.max_paper_num=$PREVIEW_MAX_PAPERS"
 
       - name: Upload digest preview
         uses: actions/upload-artifact@v4

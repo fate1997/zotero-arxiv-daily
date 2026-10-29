@@ -40,11 +40,15 @@ jobs:
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
           CUSTOM_CONFIG: ${{ vars.CUSTOM_CONFIG }}
           SEND_EMPTY: ${{ inputs.send_empty || false }}
         run: |
           if [ -n "$CUSTOM_CONFIG" ]; then
             printf '%s\n' "$CUSTOM_CONFIG" > config/custom.yaml
+          fi
+          if [ -z "$MODEL_NAME" ]; then
+            unset MODEL_NAME
           fi
           args=(executor.history_path=.cache/alert-history.json)
           if [ "$SEND_EMPTY" = true ]; then

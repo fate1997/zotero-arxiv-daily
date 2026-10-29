@@ -69,6 +69,7 @@ Below are all the secrets you need to set. They are invisible to anyone includin
 | RECEIVER | The e-mail address that receives the paper list. | abc@outlook.com |
 | OPENAI_API_KEY | API Key when using the API to access LLMs. You can get FREE API for using advanced open source LLMs in [SiliconFlow](https://cloud.siliconflow.cn/i/b3XhBRAm). | sk-xxx |
 | OPENAI_API_BASE | API URL when using the API to access LLMs. | https://api.siliconflow.cn/v1 |
+| MODEL_NAME | Model ID supported by your LLM provider. Reference it with `${oc.env:MODEL_NAME}` in `llm.generation_kwargs.model` to use the secret. | Your provider's model ID |
 
 Then you should also set a public variable `CUSTOM_CONFIG` for your custom configuration.
 ![vars](./assets/repo_var.png)
@@ -92,7 +93,7 @@ llm:
     key: ${oc.env:OPENAI_API_KEY}
     base_url: ${oc.env:OPENAI_API_BASE}
   generation_kwargs:
-    model: gpt-4o-mini
+    model: ${oc.env:MODEL_NAME,gpt-4o-mini}
 
 source:
   arxiv:
@@ -170,6 +171,10 @@ That's all! Now you can test the workflow by manually triggering it:
 > The Test workflow limits the current feed to 10 entries and saves an HTML/JSON preview as a `digest-preview` artifact; it does not send email or update history. If there are no new arXiv announcements, debug previews use the 10 latest papers in your configured categories. The preview cutoff defaults to `0` so you can inspect scores; set the `min_score` workflow input to your daily cutoff to test filtering. Duplicate checks still apply. The daily workflow uses only new announcements and sends when recommendations remain. Its manual `send_empty` input can send an empty digest to check delivery on a quiet day; scheduled behavior is unchanged.
 
 Download the preview artifact after the Test workflow finishes. The daily workflow sends the real digest.
+
+The Test workflow summarizes at most 3 papers by default; increase its `max_papers` input for a larger
+preview. The `MODEL_NAME` secret must name a model supported by your configured API provider.
+If you omit it, the example configuration falls back to `gpt-4o-mini`, which is not available at every provider.
 
 By default, the main workflow runs on 22:00 UTC everyday. You can change this time by editting the workflow config `.github/workflows/main.yml`.
 
