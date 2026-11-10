@@ -9,6 +9,7 @@ from zotero_arxiv_daily.protocol import CorpusPaper, Paper
 
 
 def setup_executor(config, monkeypatch, tmp_path):
+    config.executor.min_score = 5.0 # Exercise filtering independently of the user's digest preferences.
     config.executor.history_path = str(tmp_path / "history.json")
     config.executor.output_dir = str(tmp_path / "preview")
     config.executor.generate_summaries = False

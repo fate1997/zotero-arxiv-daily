@@ -23,4 +23,6 @@ source:
 
 executor:
   debug: ${oc.env:DEBUG,null}
+  max_paper_num: 20
+  min_score: 0 # Send the top 20 unseen papers rather than requiring a fixed relevance cutoff.
   source: ['arxiv']
